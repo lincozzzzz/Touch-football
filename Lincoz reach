@@ -1,0 +1,269 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local CoreGui = game:GetService("CoreGui")
+
+local player = Players.LocalPlayer
+local LOCAL_NAME = player.Name
+
+-- Configuration & State
+local START_REACH = 5.2                -- Starting reach distance
+local MAX_REACH = 15.0                 -- Hard maximum limit for reach
+local REACH = START_REACH              -- Initial active range
+local SPOOF = 3.85
+local PRIORITY = true
+local REACH_ACTIVE = true              -- Starts active
+
+local torso = nil
+local ball = nil
+local touching = false
+local oldTouch, oldClosest = nil, nil
+local hookedTouch, hookedClosest = nil, nil
+
+-- CREATE THE GRAPHICAL INTERFACE (UI)
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "Lincoz_Reach_Menu"
+ScreenGui.ResetOnSpawn = false
+pcall(function() ScreenGui.Parent = CoreGui end)
+if not ScreenGui.Parent then ScreenGui.Parent = player:WaitForChild("PlayerGui") end
+
+-- Main Frame
+local Frame = Instance.new("Frame")
+Frame.Size = UDim2.new(0, 200, 0, 130)
+Frame.Position = UDim2.new(0.05, 0, 0.4, 0)
+Frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+Frame.BorderSizePixel = 0
+Frame.Active = true
+Frame.Draggable = true
+Frame.Parent = ScreenGui
+
+local UICorner = Instance.new("UICorner")
+UICorner.CornerRadius = UDim.new(0, 8)
+UICorner.Parent = Frame
+
+-- Title Display (Updated to LINCOZ REACH)
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, 0, 0, 30)
+Title.Text = "LINCOZ REACH"
+Title.TextColor3 = Color3.fromRGB(255, 215, 0) -- Gold accent color
+Title.BackgroundTransparency = 1
+Title.Font = Enum.Font.SourceSansBold
+Title.TextSize = 16
+Title.Parent = Frame
+
+-- Toggle Button
+local ToggleBtn = Instance.new("TextButton")
+ToggleBtn.Size = UDim2.new(0, 180, 0, 30)
+ToggleBtn.Position = UDim2.new(0, 10, 0, 35)
+ToggleBtn.BackgroundColor3 = Color3.fromRGB(46, 204, 113) -- Green
+ToggleBtn.Text = "STATUS: ACTIVE"
+ToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+ToggleBtn.Font = Enum.Font.SourceSansBold
+ToggleBtn.TextSize = 14
+ToggleBtn.Parent = Frame
+
+local Corner1 = Instance.new("UICorner")
+Corner1.CornerRadius = UDim.new(0, 4)
+Corner1.Parent = ToggleBtn
+
+-- Interactive Typing Input Box
+local InputBox = Instance.new("TextBox")
+InputBox.Size = UDim2.new(0, 180, 0, 35)
+InputBox.Position = UDim2.new(0, 10, 0, 75)
+InputBox.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+InputBox.BorderSizePixel = 0
+InputBox.Text = tostring(REACH)
+InputBox.PlaceholderText = "Type reach here..."
+InputBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+InputBox.PlaceholderColor3 = Color3.fromRGB(120, 120, 120)
+InputBox.Font = Enum.Font.SourceSansBold
+InputBox.TextSize = 14
+InputBox.ClearTextOnFocus = false
+InputBox.Parent = Frame
+
+local Corner2 = Instance.new("UICorner")
+Corner2.CornerRadius = UDim.new(0, 4)
+Corner2.Parent = InputBox
+
+-- UI Update Logic
+local function updateUI()
+    if REACH_ACTIVE then
+        ToggleBtn.BackgroundColor3 = Color3.fromRGB(46, 204, 113)
+        ToggleBtn.Text = "STATUS: ACTIVE"
+    else
+        ToggleBtn.BackgroundColor3 = Color3.fromRGB(231, 76, 60) -- Red
+        ToggleBtn.Text = "STATUS: DISABLED"
+    end
+end
+
+-- Toggle Handler
+ToggleBtn.MouseButton1Click:Connect(function()
+    REACH_ACTIVE = not REACH_ACTIVE
+    updateUI()
+end)
+
+-- Typing Handler (Fires when you press Enter / finish typing)
+InputBox.FocusLost:Connect(function(enterPressed)
+    local numericInput = tonumber(InputBox.Text)
+    
+    if numericInput then
+        -- Enforce rules: cannot be below 0, cannot be above 15
+        if numericInput > MAX_REACH then
+            REACH = MAX_REACH
+        elseif numericInput < 0 then
+            REACH = 0
+        else
+            REACH = numericInput
+        end
+    else
+        -- Fallback to current valid value if gibberish text was entered
+        REACH = REACH
+    end
+    
+    -- Format and lock text input layout nicely
+    InputBox.Text = string.format("%.1f", REACH)
+    print("[Lincoz Reach Log] Reach distance updated manually to:", REACH)
+end)
+
+-- HOOK PIPELINE HOOKS BELOW
+local F = {
+    hook = hookfunction or hookfunc,
+    gc = getgc,
+    isL = islclosure or is_l_closure,
+    meta = getrawmetatable,
+    ro = setreadonly or function(t, b)
+        if b then (make_readonly or function() end)(t)
+        else (make_writeable or function() end)(t) end
+    end,
+    nc = newcclosure or function(f) return f end,
+    check = checkcaller or function() return false end,
+    info = debug and debug.getinfo,
+}
+
+local function getTorso(char)
+    char = char or player.Character
+    if not char then return nil end
+    return char:FindFirstChild("UpperTorso")
+        or char:FindFirstChild("Torso")
+        or char:FindFirstChild("HumanoidRootPart")
+end
+
+local function refreshTorso()
+    if not (torso and torso.Parent) then
+        torso = getTorso()
+    end
+    return torso
+end
+
+player.CharacterAdded:Connect(function(char)
+    task.wait(0.2)
+    torso = getTorso(char)
+    hookedTouch, hookedClosest = nil, nil
+end)
+
+if player.Character then
+    torso = getTorso(player.Character)
+end
+
+task.spawn(function()
+    local field = workspace:WaitForChild("FootballField", 9e9)
+    ball = field:FindFirstChild("SoccerBall")
+
+    field.ChildAdded:Connect(function(c)
+        if c.Name == "SoccerBall" then ball = c end
+    end)
+
+    field.ChildRemoved:Connect(function(c)
+        if c == ball then ball = nil end
+    end)
+end)
+
+local function ballAlive()
+    return ball and ball.Parent
+end
+
+local function fname(f)
+    local ok, info = pcall(F.info, f)
+    return ok and info and info.name or nil
+end
+
+local function install()
+    if not (F.gc and F.hook and F.isL and F.info) then return end
+
+    local needT = not hookedTouch
+    local needC = not hookedClosest
+    if not (needT or needC) then return end
+
+    for _, v in pairs(F.gc(true)) do
+        if not (needT or needC) then break end
+        if type(v) == "function" and F.isL(v) then
+            if needT and fname(v) == "touchDetect" then
+                local old = F.hook(v, F.nc(function(...)
+                    refreshTorso()
+                    touching = true
+                    local ok, ret = pcall(oldTouch, ...)
+                    touching = false
+                    if ok then return ret end
+                end))
+                oldTouch = old
+                hookedTouch = v
+                needT = false
+            elseif needC and fname(v) == "getClosestPlayerName" then
+                local old = F.hook(v, F.nc(function(...)
+                    if REACH_ACTIVE and PRIORITY and ballAlive() then
+                        return LOCAL_NAME
+                    end
+                    return oldClosest(...)
+                end))
+                oldClosest = old
+                hookedClosest = v
+                needC = false
+            end
+        end
+    end
+end
+
+task.spawn(function()
+    while task.wait(1.2) do
+        if not (hookedTouch and hookedClosest) then
+            pcall(install)
+        end
+    end
+end)
+
+if F.meta and F.ro then
+    local mt = F.meta(game)
+    local oldIndex = mt.__index
+    F.ro(mt, false)
+
+    mt.__index = F.nc(function(obj, key)
+        if not F.check()
+            and REACH_ACTIVE
+            and touching
+            and key == "Position"
+            and typeof(obj) == "Instance"
+            and obj == torso
+            and ball then
+
+            local real = oldIndex(obj, key)
+            local parent = oldIndex(ball, "Parent")
+            if not parent then return real end
+
+            local bpos = oldIndex(ball, "Position")
+            local diff = real - bpos
+            local dist = diff.Magnitude
+
+            -- Dynamically uses the value you type directly inside the InputBox
+            if dist <= SPOOF or dist > REACH or dist < 0.01 then
+                return real
+            end
+
+            return bpos + (diff / dist) * SPOOF
+        end
+        return oldIndex(obj, key)
+    end)
+
+    F.ro(mt, true)
+end
+
+updateUI()
+print("LINCOZ REACH menu initialized.")
